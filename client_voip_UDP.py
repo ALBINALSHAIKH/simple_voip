@@ -1,5 +1,3 @@
-#!/usr/bin/python
-
 import sys
 import socket
 from _thread import *
@@ -13,6 +11,7 @@ your_host = "localhost"
 port = -1
 host = "localhost"
 
+#Global variables to keep track of the send socket and the recevied sound data
 sendsocket = None
 received = [[0.0, 0.0]]
 
@@ -22,10 +21,10 @@ lock = threading.Lock()
 #check_arg(): will check for valid argument inputs
 def check_arg():
     if len(sys.argv) < 5:
-        print("Usage:client.py [your address] [port number] [host address] [port number]")
+        print("Usage:client_voip_UDP.py [your address] [port number] [host address] [port number]")
         return False
     elif len(sys.argv) > 5:
-        print("Usage:client.py [your address] [port number] [host address] [port number]")
+        print("Usage:client_voip_UDP.py [your address] [port number] [host address] [port number]")
         return False
     
     global your_port
@@ -46,71 +45,61 @@ def check_arg():
     host = sys.argv[3]
     return True
 
+#callback(): the callback function for the real-time sound streaming
 def callback(indata, outdata, frames, time, status):
     global received
     if status:
         print(status)
+
+    #Aquire a thread lock to prevent a race condition with "received"
     lock.acquire()
+
+    #Assign sound output data
     outdata[:] = received
+
+    #Reset received data to null
     received = [[0.0, 0.0]]
+
     lock.release()
 
+    #Serialize the data and send to receiving host
     sending = pickle.dumps(indata)
     sendsocket.sendto(sending, (host, port))
 
-#server_send(): handles sending messages to the server
-def server_send(ct):
-    #Send data to server
-
+#send(): handles sending sound data over UDP
+def send():
+    # Start streaming sound. Play received sound, record and send sound.
     with sd.Stream(channels=2, callback=callback):
         input()
 
-    # while True:
-    #     #Wait for user input
-    #     fs = 44100
-    #     duration = 1
-    #     while True:
-    #         data = sd.rec(int(duration * fs), samplerate=fs, channels=2)
-    #         sd.wait()
-    #         sd.play(data, fs)
-
-    #     #Send the data
-    #     data = pickle.dumps(data)
-    #     insize = str(sys.getsizeof(data)).encode('utf-8')
-    #     print(insize.decode())
-    #     # ct.send(insize)
-    #     ct.sendto(data, (host, port))
-
-#start_client_process: prepares the client socket, connects to the server and creates the sending thread as well as recieving.
+#start_client_process: prepares the sockets, and the send/receive threads.
 def start_client_process():
-    #Create the INET streaming socket
+    #Create the INET streaming sockets
     global sendsocket, received
     sendsocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     recvsocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     
     recvsocket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sendsocket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    # recvsocket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-    # sendsocket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
 
     recvsocket.bind((your_host, your_port))
     sendsocket.bind((your_host, your_port+1))
 
     #Create new thread for sending messages
-    start_new_thread(server_send, (recvsocket, ))
+    start_new_thread(send, ())
 
     while True:
-        #Recieve a byte from server
+        #Recieve 9274 bytes of serialized data.
 
         data, addr = recvsocket.recvfrom(9274)
-
-        #If data is empty, then the server disconnected.
-        if len(data) == 0:
-            break
         
         try:
+            #Aquire thread lock to prevent race conditons.
             lock.acquire()
+
+            #Unpack serialized data
             received = pickle.loads(data, encoding='bytes')
+
             lock.release()
         except Exception:
             continue
@@ -118,13 +107,11 @@ def start_client_process():
     #Close the connection when the loop breaks
     recvsocket.close()
     sendsocket.close()
-    print("Disconnected from server.")
 
     #Exit the client program
     sys.exit(0)
 
-
-#Check if the port is correct
+#Check arguments
 if check_arg():
     #Start client process for concurrent sending/recieving
     start_client_process()
